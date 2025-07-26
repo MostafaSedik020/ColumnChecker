@@ -24,6 +24,8 @@ namespace ColumnChecker.Revit
                                  .ToElements()
                                  .ToList();
             //collect errors
+            List<string> RejectedColumns = new List<string>(); // list of columns unique names that are not found in Revit or combined in one column in Revit
+            List<string> acceptedColumns = new List<string>(); // list of columns unique names that are not found in Revit or combined in one column in Revit
             StringBuilder duplicates = new StringBuilder(); //for dublicates
             StringBuilder diffDimensions = new StringBuilder();// wrong section dimensions or shape
             StringBuilder diffRebar = new StringBuilder(); //different rebar diameters or number of bars
@@ -34,94 +36,117 @@ namespace ColumnChecker.Revit
             {
                 var matchingColumns = columns.Where(c=> c.LookupParameter("ETABS Unique Name")?.AsString() == column.UniqueName)
                     .ToList();
-                if(column.UniqueName == "57")
-                {
-                    MessageBox.Show("hi");
-                }
+                //if(column.UniqueName == "57")
+                //{
+                //    MessageBox.Show("hi");
+                //}
                 //check if the unique name is duplicated
                 if (matchingColumns.Count > 1)
                 {
-                    duplicates.AppendLine($"Column: {column.UniqueName} has duplicate");
+                    
+                    duplicates.AppendLine($"Column: {column.UniqueName} has {matchingColumns.Count} duplicates in Revit");
                     continue;
                 }
 
                 //check if the column exists in revit
                 if (matchingColumns.Count == 0)
                 {
-                    missingColumns.AppendLine($"Column: {column.UniqueName} is missing in Revit");
+                    RejectedColumns.Add(column.UniqueName);
+                    //missingColumns.AppendLine($"Column: {column.UniqueName} is missing in Revit");
                     continue;
                 }
-
-                foreach (var ele in matchingColumns)
+                else
                 {
+                    acceptedColumns.Add(column.UniqueName);
+                }
 
-                    ElementId typeId = ele.GetTypeId();
-                    ElementType eleType = doc.GetElement(typeId) as ElementType;
-
-                    //check dimensions and shape
-                    if (column.IsRectangle)
+                    foreach (var ele in matchingColumns)
                     {
-                        string checkShapestr = ele.LookupParameter("Family").AsValueString();
-                        bool checkShape = ele.LookupParameter("Family").AsValueString().Contains("_RECTANGULAR_T");
 
-                        if (checkShape)
+                        ElementId typeId = ele.GetTypeId();
+                        ElementType eleType = doc.GetElement(typeId) as ElementType;
+
+                        //check dimensions and shape
+                        if (column.IsRectangle)
                         {
-                            double revitColWidth = UnitConverter.convertUnitsToMeters( eleType.LookupParameter("b").AsDouble())*1000;
-                            double revitColLength = UnitConverter.convertUnitsToMeters(eleType.LookupParameter("h").AsDouble())*1000;
+                            string checkShapestr = ele.LookupParameter("Family").AsValueString();
+                            bool checkShape = ele.LookupParameter("Family").AsValueString().Contains("_RECTANGULAR_T");
 
-                            if(Math.Abs( revitColWidth - column.Width) > 0.01)
+                            if (checkShape)
                             {
-                                diffDimensions.AppendLine($"Column: {column.UniqueName} has different width in Revit, expected {column.Width} m, found {revitColWidth} m");
+                                double revitColWidth = UnitConverter.convertUnitsToMeters(eleType.LookupParameter("b").AsDouble()) * 1000;
+                                double revitColLength = UnitConverter.convertUnitsToMeters(eleType.LookupParameter("h").AsDouble()) * 1000;
+
+                                if (Math.Abs(revitColWidth - column.Width) > 0.01)
+                                {
+                                    diffDimensions.AppendLine($"Column: {column.UniqueName} has different width in Revit, expected {column.Width} m, found {revitColWidth} m");
+                                }
+
+                                if (Math.Abs(revitColLength - column.Length) > 0.01)
+                                {
+                                    diffDimensions.AppendLine($"Column: {column.UniqueName} has different length in Revit, expected {column.Length} m, found {revitColLength} m");
+                                }
+
+
+                            }
+                            else
+                            {
+                                diffDimensions.AppendLine($"Column: {column.UniqueName} has different section shape in Revit, expected rectangular");
                             }
 
-                            if (Math.Abs(revitColLength - column.Length) > 0.01)
-                            {
-                                diffDimensions.AppendLine($"Column: {column.UniqueName} has different length in Revit, expected {column.Length} m, found {revitColLength} m");
-                            }
 
+                        }
+                        else if (column.IsCircular)
+                        {
+                            bool checkShape = ele.LookupParameter("Family").AsValueString().Contains("_CIRCULAR_T");
+                            if (checkShape)
+                            {
+                                double revitColDiameter = UnitConverter.convertUnitsToMeters(eleType.LookupParameter("b").AsDouble()) * 1000;
+
+                                if (Math.Abs(revitColDiameter - column.Length) > 0.01) //for circular columns width and length are equal
+                                {
+                                    diffDimensions.AppendLine($"Column: {column.UniqueName} has different diameter in Revit, expected {column.Width} m, found {revitColDiameter} m");
+                                }
+                            }
+                            else
+                            {
+                                diffDimensions.AppendLine($"Column: {column.UniqueName} has different section shape in Revit, expected circular");
+                            }
 
                         }
                         else
                         {
-                            diffDimensions.AppendLine($"Column: {column.UniqueName} has different section shape in Revit, expected rectangular");
+                            undefined.AppendLine($"columns with unique name {column.UniqueName} has irregular shape,cannot be checked by software");
                         }
 
+                        //check rebar diameter and number of bars
+                        int revitRebarDia = ele.LookupParameter("Rebar: Diameter").AsInteger();
+                        int revitBarsNumber = ele.LookupParameter("Rebar: No.of bars").AsInteger();
 
-                    }
-                    else if (column.IsCircular)
-                    {
-                        bool checkShape = ele.LookupParameter("Family").AsValueString().Contains("_CIRCULAR_T");
-                        if (checkShape)
+                        if (revitBarsNumber != column.BarsNumber)
                         {
-                            double revitColDiameter = UnitConverter.convertUnitsToMeters(eleType.LookupParameter("b").AsDouble()) * 1000;
-
-                            if (Math.Abs(revitColDiameter - column.Length) > 0.01) //for circular columns width and length are equal
-                            {
-                                diffDimensions.AppendLine($"Column: {column.UniqueName} has different diameter in Revit, expected {column.Width} m, found {revitColDiameter} m");
-                            }
+                            diffRebar.AppendLine($"Column: {column.UniqueName} has different number of bars in Revit, expected {column.BarsNumber}, found {revitBarsNumber}");
                         }
-                        else
+                        if (revitRebarDia != column.RebarDia)
                         {
-                            diffDimensions.AppendLine($"Column: {column.UniqueName} has different section shape in Revit, expected circular");
+                            diffRebar.AppendLine($"Column: {column.UniqueName} has different rebar diameter in Revit, expected {column.RebarDia} mm, found {revitRebarDia} mm");
                         }
 
                     }
-                    else
-                    {
-                        undefined.AppendLine($"columns with unique name {column.UniqueName} has irregular shape,cannot be checked by software");
-                    }
+            }
 
-                    //check rebar diameter and number of bars
-                    int revitRebarDia = ele.LookupParameter("Rebar: Diameter").AsInteger();
-                    int revitBarsNumber = ele.LookupParameter("Rebar: No.of bars").AsInteger();
+            //check if there are columns in Revit that are not found in ETABS
+            foreach (var columnArray in columnArrayGroup.ColumnsArrays)
+            {
+                List<string> strings = columnArray.ColumnList.Select(c => c.UniqueName).ToList();
+                
+                var commonColumns = strings.Intersect(RejectedColumns).ToList();
 
-                    if (revitBarsNumber != column.BarsNumber)
+                if (commonColumns.Count == strings.Count)
+                {
+                    foreach (var commonColumn in commonColumns)
                     {
-                        diffRebar.AppendLine($"Column: {column.UniqueName} has different number of bars in Revit, expected {column.BarsNumber}, found {revitBarsNumber}");
-                    }
-                    if (revitRebarDia != column.RebarDia)
-                    {
-                        diffRebar.AppendLine($"Column: {column.UniqueName} has different rebar diameter in Revit, expected {column.RebarDia} mm, found {revitRebarDia} mm");
+                        missingColumns.AppendLine($"Column: {commonColumn} is missing in Revit");
                     }
                     
                 }
